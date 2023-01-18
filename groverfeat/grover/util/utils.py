@@ -65,7 +65,7 @@ def load_features(path: str) -> np.ndarray:
     extension = os.path.splitext(path)[1]
 
     if extension == '.npz':
-        features = np.load(path)['features']
+        features = np.load(path)['fps']
     else:
         raise ValueError(f'Features path extension {extension} not supported.')
 
@@ -791,4 +791,86 @@ def build_model(args: Namespace, model_idx=0):
         # finetune and evaluation case.
         model = GroverFinetuneTask(args)
     initialize_weights(model=model, model_idx=model_idx)
+    return model
+
+
+def load_fast_checkpoint(
+    path: str,
+    current_args: Namespace = None,
+    cuda: bool = None,
+    logger: logging.Logger = None,
+):
+    """
+    Loads a model checkpoint.
+
+    :param path: Path where checkpoint is saved.
+    :param current_args: The current arguments. Replaces the arguments loaded from the checkpoint if provided.
+    :param cuda: Whether to move model to cuda.
+    :param logger: A logger.
+    :return: The loaded MPNN.
+    """
+    
+    from grover.model.models import GroverFastFpGeneration
+    
+    debug = logger.debug if logger is not None else print
+
+    # Load model and args
+    state = torch.load(path, map_location=lambda storage, loc: storage)
+    args, loaded_state_dict = state["args"], state["state_dict"]
+    model_ralated_args = get_model_args()
+
+    print(f"Current arg: \n{current_args}")
+    if current_args is not None:
+        for key, value in vars(args).items():
+            if key in model_ralated_args:
+                setattr(current_args, key, value)
+    else:
+        current_args = args
+
+    # !FIXME: Hack for now
+    setattr(current_args, "dropout", 0.0)
+    # args.cuda = cuda if cuda is not None else args.cuda
+
+    # Build model
+    if hasattr(current_args, 'num_tasks'):
+        current_args.output_size = current_args.num_tasks
+    else:
+        current_args.output_size = 1
+
+    if current_args.parser_name == "fingerprint":
+        model = GroverFastFpGeneration(current_args)
+    else:
+        # finetune and evaluation case.
+        model = GroverFinetuneTask(current_args)
+    initialize_weights(model=model, model_idx=0)
+    model_state_dict = model.state_dict()
+
+    # Skip missing parameters and parameters of mismatched size
+    pretrained_state_dict = {}
+    for param_name in loaded_state_dict.keys():
+        new_param_name = param_name
+        if new_param_name not in model_state_dict:
+            debug(
+                f'Pretrained parameter "{param_name}" cannot be found in model parameters.'
+            )
+        elif (
+            model_state_dict[new_param_name].shape
+            != loaded_state_dict[param_name].shape
+        ):
+            debug(
+                f'Pretrained parameter "{param_name}" '
+                f"of shape {loaded_state_dict[param_name].shape} does not match corresponding "
+                f"model parameter of shape {model_state_dict[new_param_name].shape}."
+            )
+        else:
+            debug(f'Loading pretrained parameter "{param_name}".')
+            pretrained_state_dict[new_param_name] = loaded_state_dict[param_name]
+    # Load pretrained weights
+    model_state_dict.update(pretrained_state_dict)
+    model.load_state_dict(model_state_dict)
+
+    if cuda:
+        debug("Moving model to cuda")
+        model = model.cuda()
+
     return model
