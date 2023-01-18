@@ -47,7 +47,11 @@ if __name__ == '__main__':
     elif args.parser_name == 'fingerprint':
         train_args = get_newest_train_args()
         logger = create_logger(name='fingerprint', save_dir=None, quiet=False)
-        feas = generate_fingerprints(args, logger)
+        if args.fast is False:
+            feas = generate_fingerprints(args, logger)
+        else:
+            from task.fastprint import generate_fastprints
+            feas = generate_fastprints(args, logger)
         np.savez_compressed(args.output_path, fps=feas)
     elif args.parser_name == 'predict':
         train_args = get_newest_train_args()
