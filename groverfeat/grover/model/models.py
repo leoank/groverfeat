@@ -504,3 +504,60 @@ class GroverFinetuneTask(nn.Module):
             output = (atom_ffn_output + bond_ffn_output) / 2
 
         return output
+
+
+class GroverFastFpGeneration(nn.Module):
+    """
+    GroverFpGeneration class.
+    It loads the pre-trained model and produce the fingerprints for input molecules.
+    """
+    def __init__(self, args):
+        """
+        Init function.
+        :param args: the arguments.
+        """
+        super(GroverFastFpGeneration, self).__init__()
+
+        self.fingerprint_source = args.fingerprint_source
+        self.iscuda = args.cuda
+        self.grover = GROVEREmbedding(args)
+        self.readout = Readout(rtype="mean", hidden_size=args.hidden_size)
+
+    def forward(self, batch, features_batch, output):
+        """
+        The forward function.
+        It takes graph batch and molecular feature batch as input and produce the fingerprints of this molecules.
+        :param batch:
+        :param features_batch:
+        :return:
+        """
+        _, _, _, _, _, a_scope, b_scope, _ = batch
+        # Share readout
+        mol_atom_from_bond_output = self.readout(output["atom_from_bond"], a_scope)
+        mol_atom_from_atom_output = self.readout(output["atom_from_atom"], a_scope)
+
+        if self.fingerprint_source == "bond" or self.fingerprint_source == "both":
+            mol_bond_from_atom_output = self.readout(output["bond_from_atom"], b_scope)
+            mol_bond_from_bodd_output = self.readout(output["bond_from_bond"], b_scope)
+
+        if features_batch[0] is not None:
+            features_batch = torch.from_numpy(np.stack(features_batch)).float()
+            if self.iscuda:
+                features_batch = features_batch.cuda()
+            features_batch = features_batch.to(output["atom_from_atom"])
+            if len(features_batch.shape) == 1:
+                features_batch = features_batch.view([1, features_batch.shape[0]])
+        else:
+            features_batch = None
+
+        if self.fingerprint_source == "atom":
+            fp = torch.cat([mol_atom_from_atom_output, mol_atom_from_bond_output], 1)
+        elif self.fingerprint_source == "bond":
+            fp = torch.cat([mol_bond_from_atom_output, mol_bond_from_bodd_output], 1)
+        else:
+            # the both case.
+            fp = torch.cat([mol_atom_from_atom_output, mol_atom_from_bond_output,
+                            mol_bond_from_atom_output, mol_bond_from_bodd_output], 1)
+        if features_batch is not None:
+            fp = torch.cat([fp, features_batch], 1)
+        return fp
