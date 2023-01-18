@@ -62,6 +62,8 @@ def add_fingerprint_args(parser):
                         choices=['atom', 'bond', 'both'], default='both',
                         help='The source to generate the fingerprints.')
     parser.add_argument('--checkpoint_path', type=str, help='model path')
+    parser.add_argument('--engine_path', type=str, help='tensor engine path', default=None)
+    parser.add_argument('--fast', action='store_true', default = False, help='Use tensorRT for inference')
 
 
 def add_finetune_args(parser: ArgumentParser):
